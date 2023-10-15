@@ -25,6 +25,7 @@ local grace = {}
 local graceCount = 0
 local connections = {}
 local connCount = 0
+local loadCount = 0
 
 AddEventHandler('playerConnecting', function(name, setKickReason, deferrals)
     deferrals.defer()
@@ -128,13 +129,9 @@ RegisterNetEvent('DiscordQueue:Activated', function()
     local discordId = getDiscordId(src)
 
     if connections[discordId] then
-        MySQL.prepare.await(
-            'UPDATE queueStats a set queueStopTime = now() where id = ?;', {
-            connections[discordId].dbEntry
-        })
-
         connections[discordId] = nil
         connCount = connCount - 1
+        loadCount = loadCount - 1
         grace[discordId] = nil
         graceCount = graceCount - 1
         print(playerName..' granted Grace prio for next disconnect')
@@ -207,10 +204,17 @@ CreateThread(function()
                             grace[v.DiscordId]
                             and connections[v.DiscordId]
                         )
-                        or playerCount + graceCount + 1 <= maxConnections
+                        or playerCount + graceCount + loadCount + 1 <= maxConnections
                     then
                         v.Deferral.done()
+
+                        MySQL.prepare.await(
+                            'UPDATE queueStats a set queueStopTime = now() where id = ?;', {
+                            connections[v.DiscordId].dbEntry
+                        })
+
                         connections[v.DiscordId].Loading = true
+                        loadCount = loadCount + 1
                     else
                         v.Deferral.update(Config.Displays.Prefix .. ' ' .. string.format(Config.Displays.Messages.MSG_QUEUE_PLACEMENT, k, connCount) .. ' ' .. loadingText)
                     end
