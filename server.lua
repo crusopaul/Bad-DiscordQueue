@@ -58,7 +58,7 @@ AddEventHandler('playerConnecting', function(name, setKickReason, deferrals)
             for _,v in pairs(prioRoles) do
                 for l,q in pairs(Config.Rankings) do
                     if BadgerDiscordAPI:CheckEqual(v, l) then
-                        if q < priority then
+                        if q <= priority then
                             priority = q
                             priorityLabel = l
                         end
@@ -183,25 +183,12 @@ CreateThread(function()
         end
 
         table.sort(priority, function(a, b)
-            local loadingOrder
+            local ret
 
-            if (not a.Loading) and b.Loading then
-                loadingOrder = true
+            if a.Loading ~= b.Loading then
+                ret = (not a.Loading) and b.Loading
             else
-                loadingOrder = false
-            end
-
-            local priorityOrder = a.Priority < b.Priority
-            local ret = false
-
-            if
-                loadingOrder
-                or (
-                    priorityOrder
-                    and (not loadingOrder)
-                )
-            then
-                ret = true
+                ret = a.Priority < b.Priority
             end
 
             return ret
