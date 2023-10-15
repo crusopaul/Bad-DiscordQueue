@@ -6,24 +6,40 @@ create table if not exists queueStats (
     primary key (id)
 );
 
-/* 
+/*
+ * -- See breakdown by queue type for the past 7 days
  * select
- *     discordId as 'Discord Id',
+ *     queueType as 'Queue Type',
  *     avg(timestampdiff(
  *         second,
  *         queueStartTime,
  *         queueStopTime
- *     )) as 'QueueTime Average (s)',
+ *     )) as 'Queue Time Average (s)',
  *     stddev(timestampdiff(
  *         second,
  *         queueStartTime,
  *         queueStopTime
  *     )) as 'Queue Time Std. Dev. (s)',
- *     count(1)
+ *     min(timestampdiff(
+ *         second,
+ *         queueStartTime,
+ *         queueStopTime
+ *     )) as 'Queue Min (s)',
+ *     max(timestampdiff(
+ *         second,
+ *         queueStartTime,
+ *         queueStopTime
+ *     )) as 'Queue Max (s)',
+ *     count(1) as 'Count'
  * from queueStats
  * where
- *     queueStopTime is not null
- *     and queueStopTime <> '12/31/9999'
+ *     ifnull(queueStartTime, '12/31/9999') <> '12/31/9999'
+ *     and timestampdiff(day, queueStartTime, now()) <= 7
  * group by
- *     discordId;
+ *     queueType
+ * order by
+ *     2 desc,
+ *     3 desc,
+ *     Count desc,
+ *     'Queue Type';
  */
