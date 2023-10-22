@@ -1,6 +1,17 @@
 -- Exports
 local BadgerDiscordAPI = exports['Badger_Discord_API']
 
+-- hardcap swapping
+StopResource('hardcap')
+
+AddEventHandler('onResourceStop', function(resource)
+    if resource == GetCurrentResourceName() then
+        if GetResourceState('hardcap') == 'stopped' then
+            StartResource('hardcap')
+        end
+    end
+end)
+
 -- Functions
 local function getDiscordId(src)
     local identifier
@@ -26,6 +37,7 @@ local graceCount = 0
 local connections = {}
 local connCount = 0
 local loadCount = 0
+local sessions = {}
 
 AddEventHandler('playerConnecting', function(name, setKickReason, deferrals)
     deferrals.defer()
@@ -78,18 +90,18 @@ AddEventHandler('playerConnecting', function(name, setKickReason, deferrals)
         })
 
         local dbEntryData = MySQL.prepare.await(
-            'SELECT id, queueStartTime from queueStats where discordId = ? and queueStopTime is null order by queueStartTime;', {
+            'SELECT id from queueStats where discordId = ? and queueStopTime is null order by queueStartTime;', {
             discordId
         })
 
-        if dbEntryData[1] then
+        if type(dbEntryData) == 'table' then
             local numRecords = #dbEntryData
 
             if numRecords > 1 then
                 for i=1,(numRecords-1) do
                     MySQL.prepare.await(
                         'UPDATE queueStats a set queueStopTime = \'12/31/9999\' where id = ?;', {
-                        dbEntryData[i].id
+                        dbEntryData[i]
                     })
                 end
             end
@@ -97,8 +109,7 @@ AddEventHandler('playerConnecting', function(name, setKickReason, deferrals)
             dbEntryData = dbEntryData[numRecords]
         end
 
-        local dbEntry = dbEntryData.id
-        local queueStartTime = dbEntryData.queueStartTime
+        local dbEntry = dbEntryData
 
         connections[discordId] = {
             Priority = priority,
@@ -112,6 +123,32 @@ AddEventHandler('playerConnecting', function(name, setKickReason, deferrals)
     end
 end)
 
+RegisterNetEvent('DiscordQueue:Activated', function()
+    local src = source
+    local playerName = GetPlayerName(src)
+    local discordId = getDiscordId(src)
+
+    if connections[discordId] then
+        MySQL.prepare.await(
+            'INSERT into sessionStats ( queueId, sessionStartTime ) values ( ?, now() );', {
+            connections[discordId].dbEntry
+        })
+
+        local dbEntryData = MySQL.prepare.await(
+            'SELECT id from sessionStats where queueId = ? and sessionStopTime is null order by sessionStartTime;', {
+            connections[discordId].dbEntry
+        })
+
+        sessions[src] = dbEntryData
+        connections[discordId] = nil
+        connCount = connCount - 1
+        loadCount = loadCount - 1
+        grace[discordId] = nil
+        graceCount = graceCount - 1
+        print(playerName..' granted Grace prio for next disconnect')
+    end
+end)
+
 AddEventHandler('playerDropped', function (reason)
     local src = source
     local discordId = getDiscordId(src)
@@ -121,20 +158,14 @@ AddEventHandler('playerDropped', function (reason)
         graceCount = graceCount + 1
         print(GetPlayerName(src)..' disconnected')
     end
-end)
 
-RegisterNetEvent('DiscordQueue:Activated', function()
-    local src = source
-    local playerName = GetPlayerName(src)
-    local discordId = getDiscordId(src)
+    if sessions[src] then
+        MySQL.prepare.await(
+            'UPDATE sessionStats a set sessionStopTime = now() where id = ?;', {
+            sessions[src]
+        })
 
-    if connections[discordId] then
-        connections[discordId] = nil
-        connCount = connCount - 1
-        loadCount = loadCount - 1
-        grace[discordId] = nil
-        graceCount = graceCount - 1
-        print(playerName..' granted Grace prio for next disconnect')
+        sessions[src] = nil
     end
 end)
 
@@ -170,7 +201,7 @@ CreateThread(function()
                 })
             else
                 MySQL.prepare.await(
-                    'UPDATE queueStats a set queueStopTime = now() where id = ?;', {
+                    'UPDATE queueStats a set queueStopTime = now(), discordId = null where id = ?;', {
                     connections[k].dbEntry
                 })
 
@@ -209,7 +240,7 @@ CreateThread(function()
                         v.Deferral.done()
 
                         MySQL.prepare.await(
-                            'UPDATE queueStats a set queueStopTime = now() where id = ?;', {
+                            'UPDATE queueStats a set queueStopTime = now(), discordId = null where id = ?;', {
                             connections[v.DiscordId].dbEntry
                         })
 
