@@ -30,6 +30,48 @@ local function getDiscordId(src)
     return identifier
 end
 
+local function showFlightCard(deferral, seat, connCount, priorityLabel)
+    local cardString = [[{
+    "type": "AdaptiveCard",
+    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+    "version": "1.3",
+    "body": [
+        {
+            "type": "TextBlock",
+            "text": "Taking a flight into ]]..Config.Displays.Prefix..[[!",
+            "wrap": true,
+            "size": "Large",
+            "weight": "Bolder",
+            "color": "Light",
+            "horizontalAlignment": "Center"
+        },
+        {
+            "type": "Image",
+            "url": "]]..Config.SplashImage..[[",
+            "horizontalAlignment": "Center"
+        },
+        {
+            "type": "Container",
+            "items": [
+                {
+                    "type": "TextBlock",
+                    "text": "You are flying in the ]]..priorityLabel..[[ section, seat ]]..tostring(seat)..[[ / ]]..tostring(connCount)..[[",
+                    "wrap": true,
+                    "color": "Light",
+                    "size": "Medium",
+                    "horizontalAlignment": "Center"
+                }
+            ],
+            "style": "default",
+            "bleed": true,
+            "height": "stretch"
+        }
+    ]
+}]]
+
+    deferral.presentCard(cardString)
+end
+
 -- Events
 local connectedDiscordIds = {}
 local grace = {}
@@ -80,46 +122,50 @@ AddEventHandler('playerConnecting', function(name, setKickReason, deferrals)
             end
         end
 
-        deferrals.update(Config.Displays.Prefix .. ' ' .. string.format(Config.Displays.Messages.MSG_PLACED_IN_QUEUE, priorityLabel))
-        print(name..' placed in queue with prio '..tostring(priorityLabel))
+        if priorityLabel then
+            print(name..' placed in queue with prio '..tostring(priorityLabel))
 
-        MySQL.prepare.await(
-            'INSERT into queueStats ( discordId, queueStartTime, queueStopTime, queueType ) values ( ?, now(), null, ? );', {
-            discordId,
-            priorityLabel
-        })
+            MySQL.prepare.await(
+                'INSERT into queueStats ( discordId, queueStartTime, queueStopTime, queueType ) values ( ?, now(), null, ? );', {
+                discordId,
+                priorityLabel
+            })
 
-        local dbEntryData = MySQL.prepare.await(
-            'SELECT id from queueStats where discordId = ? and queueStopTime is null order by queueStartTime;', {
-            discordId
-        })
+            local dbEntryData = MySQL.prepare.await(
+                'SELECT id from queueStats where discordId = ? and queueStopTime is null order by queueStartTime;', {
+                discordId
+            })
 
-        if type(dbEntryData) == 'table' then
-            local numRecords = #dbEntryData
+            if type(dbEntryData) == 'table' then
+                local numRecords = #dbEntryData
 
-            if numRecords > 1 then
-                for i=1,(numRecords-1) do
-                    MySQL.prepare.await(
-                        'UPDATE queueStats a set queueStopTime = \'12/31/9999\' where id = ?;', {
-                        dbEntryData[i]
-                    })
+                if numRecords > 1 then
+                    for i=1,(numRecords-1) do
+                        MySQL.prepare.await(
+                            'UPDATE queueStats a set queueStopTime = \'12/31/9999\' where id = ?;', {
+                            dbEntryData[i]
+                        })
+                    end
                 end
+
+                dbEntryData = dbEntryData[numRecords]
             end
 
-            dbEntryData = dbEntryData[numRecords]
+            local dbEntry = dbEntryData
+
+            connections[discordId] = {
+                Priority = priority,
+                Deferral = deferrals,
+                Name = name,
+                Source = src,
+                dbEntry = dbEntry,
+                PriorityLabel = priorityLabel,
+                StartTime = GetGameTimer(),
+                MetBufferReq = false,
+            }
+
+            connCount = connCount + 1
         end
-
-        local dbEntry = dbEntryData
-
-        connections[discordId] = {
-            Priority = priority,
-            Deferral = deferrals,
-            Name = name,
-            Source = src,
-            dbEntry = dbEntry,
-        }
-
-        connCount = connCount + 1
     end
 end)
 
@@ -174,6 +220,7 @@ CreateThread(function()
     local playerCount
     local PollDelayInMS = Config.PollDelayInSeconds * 1000
     local GracePeriodInMS = Config.GracePeriodInSeconds * 1000
+    local DeferralCardBufferInMS = Config.DeferralCardBufferInSeconds * 1000
     local maxConnections = GetConvarInt('sv_maxclients', 10)
     local textCount = 0
     local loadingText
@@ -191,6 +238,10 @@ CreateThread(function()
 
         for k,v in pairs(connections) do
             if v.Name == GetPlayerName(v.Source) then
+                if not v.MetBufferReq and GetGameTimer() - v.StartTime >= DeferralCardBufferInMS then
+                    v.MetBufferReq = true
+                end
+
                 table.insert(priority, {
                     DiscordId = k,
                     Priority = v.Priority,
@@ -198,6 +249,9 @@ CreateThread(function()
                     Name = v.Name,
                     Source = v.Source,
                     Loading = v.Loading,
+                    PriorityLabel = v.PriorityLabel,
+                    StartTime = v.StartTime,
+                    MetBufferReq = v.MetBufferReq,
                 })
             else
                 MySQL.prepare.await(
@@ -215,6 +269,8 @@ CreateThread(function()
 
             if a.Loading ~= b.Loading then
                 ret = (not a.Loading) and b.Loading
+            elseif a.MetBufferReq ~= b.MetBufferReq then
+                ret = a.MetBufferReq and (not b.MetBufferReq)
             else
                 ret = a.Priority < b.Priority
             end
@@ -226,16 +282,19 @@ CreateThread(function()
         textCount = (textCount + 1) % #Config.Displays.LoadingText
 
         for k,v in ipairs(priority) do
-            if v.Deferral and not v.Loading then
+            if v.Deferral and (not v.Loading) then
                 if k == 1 then
                     playerCount = GetNumPlayerIndices()
 
                     if
                         (
-                            grace[v.DiscordId]
-                            and connections[v.DiscordId]
+                            (
+                                grace[v.DiscordId]
+                                and connections[v.DiscordId]
+                            )
+                            or playerCount + graceCount + loadCount + 1 <= maxConnections
                         )
-                        or playerCount + graceCount + loadCount + 1 <= maxConnections
+                        and v.MetBufferReq
                     then
                         v.Deferral.done()
 
@@ -246,11 +305,13 @@ CreateThread(function()
 
                         connections[v.DiscordId].Loading = true
                         loadCount = loadCount + 1
+                    elseif not v.MetBufferReq then
+                        showFlightCard(v.Deferral, '...', connCount, v.PriorityLabel)
                     else
-                        v.Deferral.update(Config.Displays.Prefix .. ' ' .. string.format(Config.Displays.Messages.MSG_QUEUE_PLACEMENT, k, connCount) .. ' ' .. loadingText)
+                        showFlightCard(v.Deferral, k, connCount, v.PriorityLabel)
                     end
                 else
-                    v.Deferral.update(Config.Displays.Prefix .. ' ' .. string.format(Config.Displays.Messages.MSG_QUEUE_PLACEMENT, k, connCount) .. ' ' .. loadingText)
+                    showFlightCard(v.Deferral, k, connCount, v.PriorityLabel)
                 end
             end
         end
