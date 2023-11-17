@@ -38,7 +38,7 @@ local function showFlightCard(deferral, seat, connCount, priorityLabel)
     "body": [
         {
             "type": "TextBlock",
-            "text": "Taking a flight into ]]..Config.Displays.Prefix..[[!",
+            "text": "]]..Config.Displays.Prefix..[[",
             "wrap": true,
             "size": "Large",
             "weight": "Bolder",
@@ -223,7 +223,6 @@ CreateThread(function()
     local DeferralCardBufferInMS = Config.DeferralCardBufferInSeconds * 1000
     local maxConnections = GetConvarInt('sv_maxclients', 10)
     local textCount = 0
-    local loadingText
     local priority
 
     while true do
@@ -262,6 +261,17 @@ CreateThread(function()
                 connections[k] = nil
                 connCount = connCount - 1
             end
+
+            local newConnCount = 0
+
+            for _,_ in pairs(connections) do
+                newConnCount = newConnCount + 1
+            end
+
+            if connCount ~= newConnCount then
+                connCount = newConnCount
+                print('Connection count corrected')
+            end
         end
 
         table.sort(priority, function(a, b)
@@ -277,9 +287,6 @@ CreateThread(function()
 
             return ret
         end)
-
-        loadingText = Config.Displays.LoadingText[textCount + 1]
-        textCount = (textCount + 1) % #Config.Displays.LoadingText
 
         for k,v in ipairs(priority) do
             if v.Deferral and (not v.Loading) then
@@ -305,8 +312,6 @@ CreateThread(function()
 
                         connections[v.DiscordId].Loading = true
                         loadCount = loadCount + 1
-                    elseif not v.MetBufferReq then
-                        showFlightCard(v.Deferral, '...', connCount, v.PriorityLabel)
                     else
                         showFlightCard(v.Deferral, k, connCount, v.PriorityLabel)
                     end
