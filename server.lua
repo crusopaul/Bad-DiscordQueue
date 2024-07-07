@@ -86,7 +86,6 @@ AddEventHandler('playerConnecting', function(name, setKickReason, deferrals)
     local src = source
     local discordId = getDiscordId(src)
     local prioRoles = BadgerDiscordAPI:GetDiscordRoles(src)
-    print(name..' is connecting with deferred source '..tostring(src)..' and discord '..discordId)
     Wait(0)
 
     if not discordId then
@@ -99,6 +98,7 @@ AddEventHandler('playerConnecting', function(name, setKickReason, deferrals)
         deferrals.done(Config.Displays.Prefix .. ' ' .. Config.Displays.Messages.MSG_DUPLICATE_LICENSE)
         print(name..' disconnected for duplicate Discord')
     else
+        print(name..' is connecting with deferred source '..tostring(src)..' and discord '..discordId)
         local priority
         local priorityLabel
 
